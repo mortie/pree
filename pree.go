@@ -8,6 +8,7 @@ import "bufio"
 import "strconv"
 import "fmt"
 import "strings"
+import "runtime"
 
 type Process struct {
 	Pid int
@@ -70,7 +71,7 @@ func TicksSinceBoot() (int64, error) {
 		total += num
 	}
 
-	return total, nil
+	return total / int64(runtime.NumCPU()), nil
 }
 
 func PrettySize(kib int) string {
@@ -111,7 +112,7 @@ func ReadProc(procs Processes, pid int) (*Process, error) {
 	totalTime, err := TicksSinceBoot()
 	if err != nil { return nil, err }
 
-	proc.CPU = float32(uTime + sTime) / (float32(totalTime) - float32(startTime) * 2.5)
+	proc.CPU = float32(uTime + sTime) / (float32(totalTime) - float32(startTime))
 
 	realPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
