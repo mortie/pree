@@ -131,6 +131,10 @@ func TicksSinceBoot() (int64, error) {
 }
 
 func ReadProc(procs Processes, pid int) (*Process, error) {
+	if proc, ok := procs[pid]; ok {
+		return proc, nil
+	}
+
 	proc := &Process{Pid: pid}
 
 	stat, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
