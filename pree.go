@@ -202,17 +202,31 @@ func ReadProcs(procs Processes) {
 }
 
 func PrintFancyTree(proc *Process, opts *Options, prefix string, bar string, connector string) {
-	var format string
-	if len(proc.Children) > 0 {
-		format = "%s%s─╴%s ╤ %s\n"
+	// Don't want to show the "─╴" for the first process in the tree.
+	// The length of the dashes also decides how much "padding" should be on the
+	// prefix of child processes.
+	var dashes string
+	var subPadding string
+	if prefix == ""  {
+		dashes = ""
+		subPadding = " "
 	} else {
-		format = "%s%s─╴%s %s\n"
+		dashes = "─╴"
+		subPadding = "   "
 	}
 
-	fmt.Printf(format, prefix, connector, proc.PrettyName, ShowProcess(proc, opts))
+	// These formats are kind of a mess, but meh.
+	var format string
+	if len(proc.Children) > 0 {
+		format = "%s%s%s%s ╤ %s\n"
+	} else {
+		format = "%s%s%s%s %s\n"
+	}
+
+	fmt.Printf(format, prefix, connector, dashes, proc.PrettyName, ShowProcess(proc, opts))
 
 	sort.Stable(SortProcs{proc.Children, opts.Reverse, opts.SortFunc})
-	subPrefix := prefix + bar + strings.Repeat(" ", len(proc.PrettyName)) + "   "
+	subPrefix := prefix + bar + strings.Repeat(" ", len(proc.PrettyName)) + subPadding
 	for i, child := range proc.Children {
 		if i == len(proc.Children) - 1 {
 			connector = "└"
