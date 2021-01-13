@@ -9,6 +9,13 @@ import "strconv"
 import "fmt"
 import "strings"
 import "runtime"
+import "flag"
+
+type Options struct {
+	ShowRSS bool
+	ShowCPU bool
+	SortFunc func(a *Process, b *Process) bool
+}
 
 type Process struct {
 	Pid int
@@ -35,23 +42,65 @@ func (proc *Process) CalcAccumRSS() int {
 	return proc.AccumRSS
 }
 
-type AccumRSSSortProcs []*Process
+func (proc *Process) CalcAccumCPU() float32 {
+	if proc.AccumCPU > 0 {
+		return proc.AccumCPU
+	}
 
-func (procs AccumRSSSortProcs) Len() int {
-	return len(procs)
+	proc.AccumCPU = proc.CPU
+	for _, child := range proc.Children {
+		proc.AccumCPU += child.CalcAccumCPU()
+	}
+
+	return proc.AccumCPU
 }
 
-func (procs AccumRSSSortProcs) Less(i, j int) bool {
-	return procs[i].CalcAccumRSS() < procs[j].CalcAccumRSS()
+type SortProcs struct {
+	Procs []*Process
+	SortFunc func(a *Process, b *Process) bool
 }
 
-func (procs AccumRSSSortProcs) Swap(i, j int) {
-	tmp := procs[i]
-	procs[i] = procs[j]
-	procs[j] = tmp
+func (procs SortProcs) Len() int {
+	return len(procs.Procs)
+}
+
+func (procs SortProcs) Less(i, j int) bool {
+	return procs.SortFunc(procs.Procs[i], procs.Procs[j])
+}
+
+func (procs SortProcs) Swap(i, j int) {
+	tmp := procs.Procs[i]
+	procs.Procs[i] = procs.Procs[j]
+	procs.Procs[j] = tmp
 }
 
 type Processes map[int]*Process
+
+func PrettySize(kib int) string {
+	if kib < 1024 {
+		return fmt.Sprintf("%dKiB", kib)
+	} else if kib < 1024 * 1024 {
+		return fmt.Sprintf("%.2fMiB", float32(kib) / float32(1024))
+	} else {
+		return fmt.Sprintf("%.2fGiB", float32(kib) / float32(1024 * 1024))
+	}
+}
+
+func ShowProcess(proc *Process, opts *Options) string {
+	if opts.ShowCPU && opts.ShowRSS {
+		return fmt.Sprintf("(#%d; %s %.01f%%) -- %s %.01f%%",
+			proc.Pid, PrettySize(proc.RSS), proc.CPU * 100,
+			PrettySize(proc.CalcAccumRSS()), proc.CalcAccumCPU() * 100)
+	} else if opts.ShowCPU {
+		return fmt.Sprintf("(#%d; %.01f%%) -- %.01f%%",
+			proc.Pid, proc.CPU * 100, proc.CalcAccumCPU() * 100)
+	} else if opts.ShowRSS {
+		return fmt.Sprintf("(#%d; %s -- %s",
+			proc.Pid, PrettySize(proc.RSS), PrettySize(proc.CalcAccumRSS()))
+	} else {
+		return fmt.Sprintf("(#%d)", proc.Pid)
+	}
+}
 
 func TicksSinceBoot() (int64, error) {
 	file, err := os.Open("/proc/stat")
@@ -72,16 +121,6 @@ func TicksSinceBoot() (int64, error) {
 	}
 
 	return total / int64(runtime.NumCPU()), nil
-}
-
-func PrettySize(kib int) string {
-	if kib < 1024 {
-		return fmt.Sprintf("%dKiB", kib)
-	} else if kib < 1024 * 1024 {
-		return fmt.Sprintf("%.2fMiB", float32(kib) / float32(1024))
-	} else {
-		return fmt.Sprintf("%.2fGiB", float32(kib) / float32(1024 * 1024))
-	}
 }
 
 func ReadProc(procs Processes, pid int) (*Process, error) {
@@ -155,19 +194,17 @@ func ReadProcs(procs Processes) {
 	}
 }
 
-func PrintFancyTree(proc *Process, prefix string, bar string, connector string) {
+func PrintFancyTree(proc *Process, opts *Options, prefix string, bar string, connector string) {
 	var format string
 	if len(proc.Children) > 0 {
-		format = "%s%s─╴%s ╤ (#%d; %s %.2f%%) -- %s\n"
+		format = "%s%s─╴%s ╤ %s\n"
 	} else {
-		format = "%s%s─╴%s (#%d; %s %.2f%%) -- %s\n"
+		format = "%s%s─╴%s %s\n"
 	}
 
-	fmt.Printf(format,
-		prefix, connector, proc.PrettyName, proc.Pid,
-		PrettySize(proc.RSS), proc.CPU * 100, PrettySize(proc.CalcAccumRSS()))
+	fmt.Printf(format, prefix, connector, proc.PrettyName, ShowProcess(proc, opts))
 
-	sort.Stable(AccumRSSSortProcs(proc.Children))
+	sort.Stable(SortProcs{proc.Children, opts.SortFunc})
 	subPrefix := prefix + bar + strings.Repeat(" ", len(proc.PrettyName)) + "   "
 	for i, child := range proc.Children {
 		if i == len(proc.Children) - 1 {
@@ -178,43 +215,74 @@ func PrintFancyTree(proc *Process, prefix string, bar string, connector string) 
 			bar = "│"
 		}
 
-		PrintFancyTree(child, subPrefix, bar, connector)
+		PrintFancyTree(child, opts, subPrefix, bar, connector)
 	}
 }
 
-func PrintFancyRoot(proc *Process) {
-	PrintFancyTree(proc, "", "", "")
+func PrintFancyRoot(proc *Process, opts *Options) {
+	PrintFancyTree(proc, opts, "", "", "")
 }
 
-func PrintBoringTree(proc *Process, prefix string) {
-	format := "%s%s (#%d; %s %.2f%%) -- %s\n"
+func PrintBoringTree(proc *Process, opts *Options, prefix string) {
+	format := "%s%s %s\n"
 	fmt.Printf(format,
-		prefix, proc.PrettyName, proc.Pid,
-		PrettySize(proc.RSS), proc.CPU * 100, PrettySize(proc.CalcAccumRSS()))
+		prefix, proc.PrettyName, ShowProcess(proc, opts))
 
-	sort.Stable(AccumRSSSortProcs(proc.Children))
+	sort.Stable(SortProcs{proc.Children, opts.SortFunc})
 	subPrefix := prefix + strings.Repeat(" ", len(proc.PrettyName) + 1)
 	for _, child := range proc.Children {
-		PrintBoringTree(child, subPrefix)
+		PrintBoringTree(child, opts, subPrefix)
 	}
 }
 
-func PrintBoringRoot(proc *Process) {
-	PrintBoringTree(proc, "")
+func PrintBoringRoot(proc *Process, opts *Options) {
+	PrintBoringTree(proc, opts, "")
 }
 
 func main() {
-	procs := Processes{}
-	ReadProcs(procs)
-	pid1, ok := procs[1]
-	if !ok {
-		fmt.Println("No PID 1!")
-		return
+	showRSSFlag := flag.Bool("rss", true, "Show RSS")
+	showCPUFlag := flag.Bool("cpu", true, "Show CPU")
+	sortFlag := flag.String("sort", "rss", "Field to sort by (rss/cpu)")
+	rootPidFlag := flag.Int("root", 1, "The PID to treat as the root of the process tree")
+	styleFlag := flag.String("style", "auto", "Style (fancy|boring|auto)")
+	flag.Parse()
+
+	var opts Options
+	opts.ShowRSS = *showRSSFlag
+	opts.ShowCPU = *showCPUFlag
+	if *sortFlag == "rss" {
+		opts.SortFunc = func(a *Process, b *Process) bool {
+			return a.CalcAccumRSS() < b.CalcAccumRSS()
+		}
+	} else if *sortFlag == "cpu" {
+		opts.SortFunc = func(a *Process, b *Process) bool {
+			return a.CalcAccumCPU() < b.CalcAccumCPU()
+		}
+	} else {
+		fmt.Printf("Unknown sort option: %s\n", *sortFlag)
+		os.Exit(1)
 	}
 
-	if fileInfo, _ := os.Stdout.Stat(); (fileInfo.Mode() & os.ModeCharDevice) != 0 {
-		PrintFancyRoot(pid1)
+	procs := Processes{}
+	ReadProcs(procs)
+	rootProc, ok := procs[*rootPidFlag]
+	if !ok {
+		fmt.Printf("No PID %d!\n", *rootPidFlag)
+		os.Exit(1)
+	}
+
+	ttyStat, err := os.Stdout.Stat()
+	isTTY := false
+	if err == nil {
+		isTTY = (ttyStat.Mode() & os.ModeCharDevice) != 0
+	}
+
+	if *styleFlag == "fancy" || (*styleFlag == "auto" && isTTY) {
+		PrintFancyRoot(rootProc, &opts)
+	} else if *styleFlag == "boring" || (*styleFlag == "auto" && !isTTY) {
+		PrintBoringRoot(rootProc, &opts)
 	} else {
-		PrintBoringRoot(pid1)
+		fmt.Printf("Unknown style option: %s\n", *styleFlag)
+		os.Exit(1)
 	}
 }
