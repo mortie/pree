@@ -95,8 +95,9 @@ func ReadProc(procs Processes, pid int) (*Process, error) {
 	name := strings.Split(statParts[0], " (")[1]
 	proc.PPid, err = strconv.Atoi(statVals[4-3])
 	if err != nil { return nil, err }
-	proc.RSS, err = strconv.Atoi(statVals[24-3])
+	rssPages, err := strconv.Atoi(statVals[24-3])
 	if err != nil { return nil, err }
+	proc.RSS = (rssPages * os.Getpagesize()) / 1024;
 
 	uTime, err := strconv.ParseInt(statVals[14-3], 10, 64)
 	if err != nil { return nil, err }
