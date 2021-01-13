@@ -14,6 +14,7 @@ import "flag"
 type Options struct {
 	ShowRSS bool
 	ShowCPU bool
+	Reverse bool
 	SortFunc func(a *Process, b *Process) bool
 }
 
@@ -57,6 +58,7 @@ func (proc *Process) CalcAccumCPU() float32 {
 
 type SortProcs struct {
 	Procs []*Process
+	Reverse bool
 	SortFunc func(a *Process, b *Process) bool
 }
 
@@ -65,7 +67,12 @@ func (procs SortProcs) Len() int {
 }
 
 func (procs SortProcs) Less(i, j int) bool {
-	return procs.SortFunc(procs.Procs[i], procs.Procs[j])
+	less := procs.SortFunc(procs.Procs[i], procs.Procs[j])
+	if procs.Reverse {
+		return !less
+	} else {
+		return less
+	}
 }
 
 func (procs SortProcs) Swap(i, j int) {
@@ -204,7 +211,7 @@ func PrintFancyTree(proc *Process, opts *Options, prefix string, bar string, con
 
 	fmt.Printf(format, prefix, connector, proc.PrettyName, ShowProcess(proc, opts))
 
-	sort.Stable(SortProcs{proc.Children, opts.SortFunc})
+	sort.Stable(SortProcs{proc.Children, opts.Reverse, opts.SortFunc})
 	subPrefix := prefix + bar + strings.Repeat(" ", len(proc.PrettyName)) + "   "
 	for i, child := range proc.Children {
 		if i == len(proc.Children) - 1 {
@@ -228,7 +235,7 @@ func PrintBoringTree(proc *Process, opts *Options, prefix string) {
 	fmt.Printf(format,
 		prefix, proc.PrettyName, ShowProcess(proc, opts))
 
-	sort.Stable(SortProcs{proc.Children, opts.SortFunc})
+	sort.Stable(SortProcs{proc.Children, opts.Reverse, opts.SortFunc})
 	subPrefix := prefix + strings.Repeat(" ", len(proc.PrettyName) + 1)
 	for _, child := range proc.Children {
 		PrintBoringTree(child, opts, subPrefix)
@@ -243,6 +250,7 @@ func main() {
 	showRSSFlag := flag.Bool("rss", true, "Show RSS")
 	showCPUFlag := flag.Bool("cpu", true, "Show CPU")
 	sortFlag := flag.String("sort", "rss", "Field to sort by (rss/cpu)")
+	reverseFlag := flag.Bool("reverse", false, "Reverse sort direction")
 	rootPidFlag := flag.Int("root", 1, "The PID to treat as the root of the process tree")
 	styleFlag := flag.String("style", "auto", "Style (fancy|boring|auto)")
 	flag.Parse()
@@ -250,6 +258,7 @@ func main() {
 	var opts Options
 	opts.ShowRSS = *showRSSFlag
 	opts.ShowCPU = *showCPUFlag
+	opts.Reverse = *reverseFlag
 	if *sortFlag == "rss" {
 		opts.SortFunc = func(a *Process, b *Process) bool {
 			return a.CalcAccumRSS() < b.CalcAccumRSS()
