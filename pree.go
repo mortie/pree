@@ -4,16 +4,15 @@ import "path"
 import "sort"
 import "os"
 import "io/ioutil"
-import "bufio"
 import "strconv"
 import "fmt"
 import "strings"
-import "runtime"
 import "flag"
 
 type Options struct {
 	ShowRSS bool
 	ShowCPU bool
+	ShowCmdLine bool
 	Reverse bool
 	SortFunc func(a *Process, b *Process) bool
 }
@@ -110,24 +109,21 @@ func ShowProcess(proc *Process, opts *Options) string {
 }
 
 func TicksSinceBoot() (int64, error) {
-	file, err := os.Open("/proc/stat")
-	if err != nil { return 0, err }
-	defer file.Close()
-	r := bufio.NewReader(file)
-
-	line, err := r.ReadString('\n')
-	if err != nil { return 0, err }
-
-	fields := strings.Fields(line)
-
-	var total int64 = 0
-	for _, val := range fields[1:] {
-		num, err := strconv.ParseInt(val, 10, 64)
-		if err != nil { return 0, err }
-		total += num
+	ut, err := ioutil.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0, err
 	}
 
-	return total / int64(runtime.NumCPU()), nil
+	uptime, err := strconv.ParseFloat(strings.Split(string(ut), " ")[0], 32)
+	if err != nil {
+		return 0, err
+	}
+
+	// 100 here should be given by USER_HZ, from sysconf(_SC_CLK_TCK).
+	// However, in practice, that's always 100, and calling sysconf complicates things.
+	// I think I would either have to use CGo or a dedicated sysconf package.
+	ticks := uptime * 100
+	return int64(ticks), nil
 }
 
 func ReadProc(procs Processes, pid int) (*Process, error) {
@@ -162,7 +158,13 @@ func ReadProc(procs Processes, pid int) (*Process, error) {
 	totalTime, err := TicksSinceBoot()
 	if err != nil { return nil, err }
 
-	proc.CPU = float32(uTime + sTime) / (float32(totalTime) - float32(startTime))
+	// A process that was _just_ started might have run for less than 1 tick,
+	// so totalTime-startTime would be 0. Don't divide by 0.
+	if totalTime == startTime {
+		proc.CPU = 0
+	} else {
+		proc.CPU = float32(uTime + sTime) / (float32(totalTime) - float32(startTime))
+	}
 
 	realPath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {
