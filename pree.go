@@ -160,7 +160,9 @@ func ReadProc(procs Processes, pid int) (*Process, error) {
 
 	// A process that was _just_ started might have run for less than 1 tick,
 	// so totalTime-startTime would be 0. Don't divide by 0.
-	if totalTime == startTime {
+	// Also, don't want to make the result noisy by showing that this process
+	// uses 100% CPU.
+	if pid == os.Getpid() || totalTime == startTime {
 		proc.CPU = 0
 	} else {
 		proc.CPU = float32(uTime + sTime) / (float32(totalTime) - float32(startTime))
